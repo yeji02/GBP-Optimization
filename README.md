@@ -1,2 +1,2 @@
 # GBP-Optimization
-Config files for my GitHub profile.
+GBP Optim PPT 파일 참고
