@@ -1,117 +1,180 @@
-# 🧪 GBP 기반 Simulation-Based Optimization 예제
+# DEVS 기반 동적 생산공정 파라미터 최적화 (PPO)
 
 ## 📌 프로젝트 개요
-본 예제는 **DEVS 기반 시뮬레이션 모델**과 **강화학습(Proximal Policy Optimization, PPO)** 알고리즘을 결합하여  
-다중 서버 생산 시스템의 **운영 파라미터를 최적화**하는 프로젝트입니다.
+DEVS(xdevs) 기반 다중 설비 생산공정 시뮬레이션에서 공정 상태를 일정 주기마다 관측하고, 강화학습(PPO)이 운영 파라미터를 동적으로 조절하는 프로젝트입니다.
 
-DEVS(Discrete Event System Specification)는 생산 및 서비스 시스템의 동적 거동을 정밀하게 모델링할 수 있는 시뮬레이션 기법이며,  
-본 프로젝트에서는 `PythonPDEVS` 라이브러리를 활용하여 생산 라인의 핵심 구성요소(Generator, Buffer, Processor, Collector)를 모델링했습니다.
+```
+공정 상태 수집 → AI가 운영 파라미터 결정 → DEVS 시뮬레이션(Δt=10) → KPI·보상 계산 → 다음 의사결정
+```
+
+주요 내용
+1. AI 제어변수와 환경변수 분리
+2. 시뮬레이션 도중 상태를 보고 파라미터를 바꾸는 동적 최적화
+3. 자원 비용이 포함된 trade-off 보상 설계
+4. 수요 급증 / 설비 성능 저하 시나리오에서 정적 최적 조합과 비교·검증
 
 ---
 
 ## 🏗 시스템 구성
 
-GBP 시스템은 다음 4가지 원자(Atomic) 모델로 구성된 복합(Coupled) DEVS 모델입니다.
+```
+                 in_ctrl (Control 메시지, 10 time마다 외부 이벤트로 주입)
+        ┌──────────────┬──────────────┬─────────────────────┐
+        ▼              ▼              ▼                     ▼
+Generator ──▶ Release ──▶ Buffer ──▶ Processor0..3 ──▶ Collector
+(수요 발생)   (작업 투입)   (대기·할당)   (가공)              (KPI 수집)
+```
 
 | 컴포넌트 | 역할 |
-|----------|------|
-| Generator | 일정 간격(interarrival)으로 작업을 생성하며, 각 작업에는 처리에 필요한 크기(size)와 도착 시간이 포함됨 |
-| Buffer | 다중 Processor 앞단에 위치하여 작업을 대기시키고, 유휴 Processor가 생기면 즉시 작업을 전달 |
-| Processor | 작업을 받아 service rate에 따라 처리하고, 완료 후 Collector로 전달 |
-| Collector | 완료된 작업을 수집해 평균 체류시간, 대기시간, 처리율 등 성능 지표를 계산 |
+|---|---|
+| Generator | 시간가변 도착률 λ(t)의 비정상 포아송 과정(thinning)으로 주문 생성 |
+| Release | 주문 Backlog를 보관하고 최소 `release_interval` 간격으로 공정에 투입 |
+| Buffer | FIFO 대기열 + 디스패처. 가동 대수·할당 정책에 따라 유휴 Processor에 작업 전달 |
+| Processor ×4 | 처리시간 = size / (service_rate × health(t)) × noise. 최대 4대를 만들어 두고 가동 여부는 Buffer가 제어 |
+| Collector | 완료 작업의 타임스탬프(도착·투입·시작·완료)를 수집 |
 
-Processor 개수는 파라미터로 설정할 수 있으며, CoupledDEVS 구조를 통해 여러 Processor를 병렬로 구성할 수 있습니다.
+AI의 결정은 루트 Coupled 모델의 입력 포트 `in_ctrl`로 DEVS 외부 이벤트(`Coordinator.inject`)로 들어가 각 원자 모델에 전파됩니다. 진행 중인 작업은 기존 조건을 유지하고, 새 조건은 다음 작업부터 적용됩니다.
 
----
+### 제어변수 vs 환경변수
 
-## ⚙️ 환경 설정
+| 구분 | 변수 | 범위 / 내용 |
+|---|---|---|
+| AI 제어변수 | Service Rate | 0.7 ~ 1.2 (전 설비 공통 처리 속도) |
+| | Active Server 수 | 1 ~ 4대 |
+| | Release Interval | 0.05 ~ 1.0 (작업 투입 최소 간격) |
+| | Dispatching Policy | `INDEX`(고정 순서) / `HEALTH`(관측 성능이 높은 설비 우선) |
+| 환경변수 | Demand Arrival | 평상시 λ=1.5, 시나리오에 따라 변동 |
+| | Job Size | N(1.0, 0.2²) |
+| | Processing Noise | lognormal, CV 0.1 |
+| | Machine Degradation | 특정 Processor의 성능 배율 저하 (AI는 직접 볼 수 없고 처리시간으로만 추정) |
 
-1. `PythonPDEVS` 저장소를 클론 후 Python 3.X 환경에서 동작하도록 `Solver.py` 및 `Controller.py` 수정  
-2. `src` 디렉토리에서 `pip install -e .` 명령으로 로컬 개발 환경에 설치  
-3. `main.py` 실행 또는 각 컴포넌트 파일을 통해 GBP 시스템 시뮬레이션 및 PPO 학습 수행
+### 상태 · 행동 · 보상
 
----
+- State (15차원): Queue, Backlog, WIP, Utilization, Throughput, AvgWaitingTime, ArrivalRate, ArrivalTrend(EWMA), 현재 ActiveServers/ServiceRate/ReleaseInterval, 설비별 성능 추정치 ×4 (실측 처리시간 ÷ 예상 처리시간의 EWMA)
+- Action: [ServiceRate, ActiveServers, ReleaseInterval, Dispatch]
+- Reward (구간마다):
 
-## 📂 프로젝트 파일 설명
+$$R_t = w_1 T - w_2 W - w_3 \mathrm{WIP} - w_4 C - w_5 V$$
 
-| 파일명 | 설명 |
-|--------|------|
-| **`xdevs_Gen.py`** | **Generator 모델** 정의. 일정한 간격(interarrival time)으로 작업(Job)을 생성하며, 각 작업에는 처리에 필요한 크기(size)와 도착 시간이 할당됨. 생산 라인의 작업 유입을 담당하는 핵심 모듈. |
-| **`xdevs_Buffer.py`** | **Buffer(대기열) 모델** 정의. 여러 Processor 앞단에 위치하여 도착한 작업을 대기시키고, 유휴 Processor가 생기면 즉시 작업을 전달. 다중 서버 환경에서 처리 효율을 높이는 핵심 컴포넌트. |
-| **`xdevs_Proc.py`** | **Processor 모델** 정의. Buffer로부터 Job을 받아 설정된 service rate에 따라 처리하고, 완료 시 Collector로 작업을 전달. 병렬 Processor 구성이 가능하며 시스템 처리율에 직접적인 영향을 미침. |
-| **`xdevs_Coll.py`** | **Collector 모델** 정의. Processor에서 완료된 Job을 수집하고, 평균 체류시간, 대기시간, 처리율 등 **핵심 성능 지표(metrics)**를 계산하여 강화학습 보상 신호로 활용. |
-| **`xdevs_Jobm.py`** | **Job 메시지 구조 및 데이터 처리 로직** 정의. Generator에서 생성되는 Job 객체의 속성(도착 시각, 크기, 상태 등)을 관리하며, 각 컴포넌트 간 Job 전달 시 공통 인터페이스 역할. |
-| **`xdevs_Coupled.py`** | 위의 Generator, Buffer, Processor, Collector를 하나의 **Coupled DEVS 시스템**으로 연결하는 구성 파일. Processor 개수와 Buffer 크기 등 파라미터에 따라 동적으로 시스템 구조를 설정하며, 시뮬레이션 실행의 엔트리 포인트 역할. |
-| **`PPO.py`** | **Proximal Policy Optimization** 강화학습 알고리즘 구현. 연속형(interarrival, service rate 등)과 이산형(buffer capacity, server 수) 파라미터를 동시에 제어할 수 있는 정책을 정의하고, Advantage 계산 및 clipping으로 학습 안정성 확보. |
-| **`main.py`** | 전체 실행 파이프라인을 구성하는 메인 스크립트. PPO 에이전트를 초기화하고, GBP 시뮬레이션 환경을 불러와 학습 및 최적화를 진행하며, 최적 파라미터와 결과를 출력. 프로젝트의 실행 시작점(entry point). |
+| 항 | 정의 | 가중치 |
+|---|---|---|
+| T | 구간 완료 작업 수 / Δt | 1.0 |
+| W | 대기 누적량 / Δt (= 시간평균 대기 작업 수, Little의 법칙상 λ×평균 대기시간) | 0.3 |
+| WIP | 공정 내 시간평균 재공 (Buffer + 가공 중) | 0.2 |
+| C | 자원 비용률 = Σ_가동설비 (0.5 + 0.5 × rate²) — 가동 고정비 + 속도에 따른 에너지/마모비 | 0.5 |
+| V | SLA(사이클타임 ≤ 5) 위반 비율 + WIP 상한(8) 초과분 | 2.0 |
 
----
+비용 계수는 "평상시 최적 = 2대×고속, 수요 급증 시 최적 = 3대"가 되도록 정적 grid 분석으로 보정했습니다. 즉 하나의 고정 조합으로는 두 상황을 모두 최적으로 운영할 수 없는 구조입니다.
 
-## 🧠 강화학습 적용 (PPO)
+### 시나리오
 
-GBP 모델의 운영 파라미터는 **연속형(interarrival, service rate, job size)** 과  
-**이산형(buffer capacity, server 수)** 변수를 모두 포함하므로,  
-이를 동시에 제어할 수 있는 정책 기반 강화학습 알고리즘인 **PPO (Proximal Policy Optimization)** 를 사용했습니다.
+| Scenario | 내용 |
+|---|---|
+| Normal | λ=1.5 일정, 모든 설비 정상 |
+| Demand Surge | t=200~400 구간 수요 +30% (λ=1.95) |
+| Machine Degradation | t≥200부터 Processor0 성능 -30% |
 
-### 알고리즘 선택 이유
-- 연속형·이산형 파라미터를 동시에 제어 가능  
-- 정책 업데이트 폭을 제한해 학습 안정성 확보  
-- 시뮬레이션 실행 비용이 큰 환경에서도 샘플 효율적 활용 가능
+학습 시에는 세 시나리오를 매 에피소드 무작위로 섞고, 변동 시점·크기·대상 설비·기본 수요(±10%)도 랜덤화해 특정 시점을 외우지 못하게 했습니다. 평가는 고정 시나리오 × 30개 시드로 수행합니다.
 
-### 학습 과정
-1. PPO 에이전트가 연속/이산 행동을 샘플링  
-2. 샘플링된 파라미터로 GBP 시뮬레이션 실행  
-3. Collector에서 계산된 성능지표(평균 체류시간, 처리율, 총 소요시간 등)를 기반으로 보상 계산  
-4. Advantage와 clipping 기법을 이용하여 정책 파라미터(mu, sigma, logits) 업데이트
----
-
-## 🏆 최적화 결과
-
-강화학습을 통해 다음과 같은 파라미터 조합이 학습되었습니다.
-
-- Interarrival: 최소값(0.2)로 수렴 → 빠른 작업 생성  
-- Service Rate: 최대값(5.0)에 도달 → 높은 처리율  
-- Job Size 평균/분산: 작고 안정적인 값으로 수렴  
-- Buffer Capacity: 최소값(20) 선택 확률 증가  
-- Server 수: 2개 선택 확률 증가 (안정적인 처리 구조 확보)
-
-결과적으로, 단순 시뮬레이션 실행에 비해 **다목적 통합 성능 지표를 약 201% 향상**시켰으며,  
-강화학습이 복합적인 성능 목표(체류시간 최소화, 처리율 최대화, 이용률 안정화 등)와 자원 제약을 동시에 고려하여  
-효율적인 운영 방안을 탐색할 수 있음을 확인했습니다.
-
----
----
-
-## 📊 최적화 전·후 성능 비교
-
-강화학습(PPO)을 통한 파라미터 최적화 전·후 시스템 성능을 비교한 결과는 다음과 같습니다.
-
-| 지표 | 최적화 이전 (단일 실행) | 최적화 이후 (PPO 최적) | 개선율 |
-|------|---------------------------|----------------------------|--------|
-| avg_time_in_system ↓<br>(평균 체류 시간) |0.936| 0.149|84%↓|
-| avg_queueing_time ↓<br>(평균 대기 시간) | 0.106 | 0.049 | 54%↓|
-| throughput ↑<br>(처리량) | 0.955 | 5.358| 461% ↑|
-| makespan ↓<br>(총 소요 시간) | 418.88| 74.65 | 82% ↓|
-| scalar_obj ↓<br>(통합 목표값) | -0.147 | -0.296 | 201 ↓|
-
-결과적으로, 단순 시뮬레이션 실행에 비해 **다목적 통합 성능 지표를 약 201% 향상**시켰으며,  
-강화학습이 복합적인 성능 목표(체류시간 최소화, 처리율 최대화, 이용률 안정화 등)와 자원 제약을 동시에 고려하여  
-효율적인 운영 방안을 탐색할 수 있음을 확인했습니다.
+### PPO
+- PyTorch Actor-Critic, PPO-Clip, GAE(γ=0.95, λ=0.9), 업데이트당 8 에피소드(480 step), 총 400 업데이트(3,200 에피소드)
+- 조건부 혼합 행동: 이산 행동(가동 대수·디스패칭)을 먼저 샘플링하고, 연속 행동(속도·투입간격)은 선택된 가동 대수를 입력으로 받아 결정
 
 ---
 
-## 📝 요약
+## 🏆 실험 결과
 
-| 항목 | 내용 |
-|------|------|
-| 시뮬레이션 프레임워크 | PythonPDEVS (DEVS 기반 DES 모델링) |
-| 최적화 대상 | Interarrival, Service Rate, Job Size, Buffer Capacity, Server 수 |
-| RL 알고리즘 | PPO (연속 + 이산 동시 제어) |
-| 최적화 목표 | 체류시간 최소화, 처리율 극대화, 비용 최소화, 이용률 안정화 |
-| 성능 개선 | 통합 성능지표 약 201% 향상 |
+모든 방법은 같은 시드(공통 난수)에서 같은 trade-off 보상으로 채점했습니다. 상세 결과는 [results/results.md](results/results.md)에 있습니다.
+
+| Method | 설명 |
+|---|---|
+| Fixed | 현장 기준 조건: 2대, 속도 1.0, 즉시 투입, 고정 순서 할당 |
+| Static-Opt | 고정 조합 108개 × 16 에피소드 Grid Search → 2대, 속도 1.2, HEALTH 할당 |
+| PPO | 10 time마다 상태를 보고 파라미터를 결정 |
+
+### 방법별 KPI (3개 시나리오 평균)
+
+| Method | Throughput ↑ | Waiting ↓ | WIP ↓ | Resource Cost ↓ | SLA Violation ↓ | Reward ↑ |
+|---|---|---|---|---|---|---|
+| Fixed | 1.537 | 1.407 | 3.80 | 2.000 | 9.82% | -71.80 |
+| Static-Opt | 1.538 | 0.345 | 1.82 | 2.440 | 0.25% | -12.81 |
+| PPO | 1.539 | 0.286 | 1.73 | 2.482 | 0.01% | -10.95 |
+
+### 시나리오별 보상 (mean ± std)
+
+| Scenario | Fixed | Static-Opt | PPO |
+|---|---|---|---|
+| Normal | -20.22 ± 10.66 | -10.88 ± 1.83 | -10.79 ± 1.94 |
+| Demand Surge | -116.16 ± 94.65 | -16.38 ± 10.03 | -11.00 ± 2.53 |
+| Machine Degradation | -79.01 ± 52.76 | -11.18 ± 1.92 | -11.06 ± 1.87 |
+
+Demand Surge 상세 (Static-Opt → PPO): 평균 대기시간 0.483 → 0.348 (-28%), SLA 위반 0.69% → 0.01%, WIP 2.15 → 1.94, 자원 비용 2.440 → 2.515 (+3%)
+
+![dynamic](results/dynamic_response.png)
+![kpi](results/kpi_comparison.png)
+
+### 결과 해석
+- 평상시·설비 저하에서는 PPO ≈ Static-Opt. 두 방법 모두 "2대 × 최고속 + HEALTH 할당"에 수렴했습니다. 설비 저하는 HEALTH 할당만으로 대응되어 성능이 떨어진 P0의 분담이 1%로 줄고 다른 설비가 작업을 넘겨받습니다(Fixed는 P0가 42%를 계속 처리).
+- 수요 급증에서 차이가 납니다. PPO는 큐가 쌓이는 구간에만 3번째 설비를 일시적으로 가동하고 해소되면 다시 2대로 줄입니다. 비용을 3%만 늘려 대기시간을 28% 줄였고 성능 편차(std 10.0 → 2.5)도 크게 줄었습니다.
+- 다만 학습된 정책은 "급증 구간 동안 3대를 계속 운영"하는 형태가 아니라 큐 상태에 반응해 짧게 증설하는 형태입니다 (급증 구간 평균 가동 대수 2.2대). 수요 변화 자체보다 그 결과로 나타나는 대기열에 반응하는 정책을 학습한 것으로 보입니다.
 
 ---
+
+## 🧗 개발 중 부딪힌 문제와 대응
+
+### 1. 성능 지표만 보상하면 자원 상한으로 수렴 (보상 설계 v1 → v2)
+처음에는 처리량과 대기시간만 보상(`--reward performance`)으로 사용했습니다. 그 결과 정책이 가동 대수 4대(상한) 로 수렴했습니다. 성능 향상에 대한 보상만 있고 자원 사용 비용이 없었기 때문입니다. 자원 비용·WIP·제약 위반을 추가한 v2 보상으로 재설계했습니다.
+
+| Reward | 평균 가동 대수 | 평균 Service Rate | Waiting ↓ | Resource Cost ↓ | Reward(v2 기준) ↑ |
+|---|---|---|---|---|---|
+| v1: T − W | 4.00 | 1.160 | 0.013 | 4.691 | -65.39 |
+| v2: T − W − WIP − C − V | 2.05 | 1.195 | 0.286 | 2.482 | -10.95 |
+
+v1 정책은 대기시간이 거의 0이지만 자원 비용이 v2보다 89% 높습니다.
+
+![training](results/training_curve.png)
+
+### 2. 이산·연속 행동을 독립적으로 뽑으면 "3대 × 저속"에 고착
+처음에는 가동 대수와 Service Rate를 서로 독립적인 분포에서 샘플링했습니다. 이 구조에서 PPO는 학습 초반부터 항상 3대 × 속도 0.85에 고착됐습니다(로그: `runs/train_tradeoff_v0_independent_action.log`). "2대로 줄이려면 속도를 함께 올려야 하는데" 독립 샘플링에서는 2대 + 저속 조합이 주로 뽑혀 과부하 페널티를 받았고, 그래서 2대 자체를 기피하게 된 것입니다.
+→ 연속 행동을 선택된 가동 대수에 조건부로 결정하는 구조로 바꾸자 2대 × 고속 운영을 찾았고, 필요할 때만 3대로 늘리는 정책을 학습했습니다.
+
+### 3. 학습 불안정
+v2 학습 중 약 2,000 에피소드 부근에서 정책이 일시적으로 붕괴했다가 회복했습니다(학습 곡선 급락 구간). 학습률 감쇠나 KL 기반 조기 종료로 개선할 여지가 있습니다.
+
+---
+
+## ⚙️ 실행 방법
+
+```bash
+pip install -r requirements.txt      # xdevs, numpy, torch, matplotlib
+
+python main.py                        # 전체 파이프라인 (Grid Search → PPO v1/v2 학습 → 평가)
+
+# 단계별 실행
+python baselines.py                   # Static-Opt Grid Search → runs/static_opt.json (약 3분)
+python train_ppo.py --reward tradeoff     # → runs/ppo_tradeoff/ (약 11분, CPU)
+python train_ppo.py --reward performance  # → runs/ppo_performance/
+python evaluate.py                    # → results/results.md, results/*.png
+```
+
+## 📂 파일 구성
+
+| 파일 | 설명 |
+|---|---|
+| `xdevs_Job.py` | Job(타임스탬프 포함), Control(제어 메시지), TimeAvg(시간가중 평균 누적기) |
+| `xdevs_Gen.py` | 수요 Generator (비정상 포아송) |
+| `xdevs_Release.py` | 작업 투입 모델 (Release Interval) |
+| `xdevs_Buffer.py` | 대기열 + 디스패처 (가동 대수, INDEX/HEALTH 정책) |
+| `xdevs_Proc.py` | Processor (Service Rate, 처리 노이즈, 성능 저하) |
+| `xdevs_Coll.py` | 완료 작업 수집 |
+| `xdevs_Coupled.py` | 전체 Coupled DEVS 모델 + 제어 입력 포트 |
+| `scenarios.py` | 환경변수와 Normal / Demand Surge / Machine Degradation 시나리오 |
+| `gbp_env.py` | 강화학습 환경: 단계별 시뮬레이션, 상태 관측, 보상, KPI |
+| `PPO.py` | PyTorch PPO Actor-Critic (조건부 혼합 행동) |
+| `train_ppo.py` | PPO 학습 스크립트 |
+| `baselines.py` | Fixed / Static-Opt(Grid Search) baseline |
+| `evaluate.py` | 시나리오별 비교 평가, 표·그림 생성 |
 
 ## 📚 참고
-- PythonPDEVS: [https://github.com/capocchi/PythonPDEVS](https://github.com/capocchi/PythonPDEVS)  
-- PPO 알고리즘: Schulman et al., *Proximal Policy Optimization Algorithms*, arXiv:1707.06347  
+- xdevs (Python DEVS): https://github.com/iscar-ucm/xdevs.py
+- Schulman et al., *Proximal Policy Optimization Algorithms*, arXiv:1707.06347

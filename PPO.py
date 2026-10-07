@@ -1,159 +1,140 @@
-
+"""
+PPO-Clip Actor-Critic (PyTorch) - 연속 + 이산 혼합 행동
+ - 연속: ServiceRate, ReleaseInterval  → 대각 가우시안 (정규화 공간 [-1, 1])
+ - 이산: ActiveServers(1..N), Dispatch(INDEX/HEALTH) → 카테고리 분포
+ - 연속 행동은 선택된 ActiveServers에 조건부 (parameterized action)
+ - 상태 s_t를 입력받는 정책 π(a|s): 공정 상태가 바뀌면 파라미터도 바뀜 (동적 최적화)
+ - GAE(λ)로 Advantage 추정, 시간 제한 종료(truncation)는 V(s_T)로 bootstrap
+"""
+from typing import Dict
 import numpy as np
-from typing import List, Dict, Tuple
-# ============================================================
-# PPO-Clip (score-function gradient version, no autodiff)
-#  - 연속: 가우시안(대각) 정책 (μ, σ)
-#  - 이산: 소프트맥스 정책 (capacity, servers)
-#  - 배치로 old_logp 저장 → 여러 epoch로 클립 비율 기반 업데이트
-# ============================================================
-class PPOMultiPolicy:
-    def __init__(self,
-                bounds: Dict[str, Tuple[float, float]],
-                cont_init: Dict[str, float],
-                capacity_choices: List[int],
-                servers_choices: List[int],
-                sigma_min=0.02, sigma_max=3.0,
-                seed=0):
-        # 랜덤 시드 고정 (재현성)
-        self.rng = np.random.default_rng(seed)
-        
-        # --- 연속 행동(Continuous Action) 파라미터 ---
-        self.cont_names = ["interarrival","service_rate","size_mu","size_sigma"] # 연속 행동의 이름들
-        self.bounds = bounds  # 각 연속 행동의 최솟값/최댓값
-        # 가우시안 분포의 평균(μ). 초기값으로 시작.
-        self.mu = np.array([cont_init[k] for k in self.cont_names], dtype=float)
-        # 가우시안 분포의 표준편차(σ). 범위의 1/4로 초기화하여 적당한 탐험을 유도.
-        self.sigma = np.array([(bounds[k][1]-bounds[k][0])*0.25 for k in self.cont_names], dtype=float)
-        self.sigma_min = sigma_min; self.sigma_max = sigma_max # σ가 너무 작거나 커지지 않도록 제한
+import torch
+import torch.nn as nn
+from torch.distributions import Categorical, Normal
 
-        # --- 이산 행동(Discrete Action) 파라미터 ---
-        self.capacity_choices = list(capacity_choices) # 선택 가능한 용량 목록
-        self.servers_choices  = list(servers_choices) # 선택 가능한 서버 수 목록
-        # 각 선택지의 확률을 결정하는 logit 값. 0으로 초기화 (모든 선택 확률이 동일).
-        self.logits_capacity = np.zeros(len(self.capacity_choices), dtype=float)
-        self.logits_servers  = np.zeros(len(self.servers_choices), dtype=float)
+from xdevs_Job import Control
+from gbp_env import N_SERVERS, SERVICE_RATE_BOUNDS, RELEASE_BOUNDS
 
-    @staticmethod
-    def _softmax(logits):
-        z = logits - np.max(logits)  # 오버플로우 방지를 위한 안정화 트릭
-        e = np.exp(z)
-        return e / (np.sum(e) + 1e-12) # 0으로 나누는 것을 방지
-    
-    def sample_batch(self, batch_size:int):
-        # 1. 연속 행동 샘플링 (가우시안 분포)
-        xs = self.rng.normal(self.mu, self.sigma, size=(batch_size, len(self.mu)))
-        for i, k in enumerate(self.cont_names): # 경계를 벗어나지 않도록 clip
-            lo, hi = self.bounds[k]
-            xs[:, i] = np.clip(xs[:, i], lo, hi)
 
-        # 2. 이산 행동 샘플링 (카테고리 분포)
-        pc = self._softmax(self.logits_capacity) # 용량 확률
-        ps = self._softmax(self.logits_servers)  # 서버 수 확률
-        cap_idx = self.rng.choice(len(self.capacity_choices), size=batch_size, p=pc)
-        srv_idx = self.rng.choice(len(self.servers_choices),  size=batch_size, p=ps)
-        caps = np.array([self.capacity_choices[i] for i in cap_idx], dtype=int)
-        srvs = np.array([self.servers_choices[i]  for i in srv_idx], dtype=int)
+def mlp(i, o, h=64):
+    return nn.Sequential(nn.Linear(i, h), nn.Tanh(), nn.Linear(h, h), nn.Tanh(), nn.Linear(h, o))
 
-        # 3. 샘플링 시점의 로그 확률(old_logp) 계산 및 저장
-        old_logp_cont = self.gaussian_log_prob(xs, self.mu, self.sigma)
-        old_logp_cap  = np.log(pc[cap_idx] + 1e-12)
-        old_logp_srv  = np.log(ps[srv_idx] + 1e-12)
-        old_logp_total = old_logp_cont + old_logp_cap + old_logp_srv
 
-        # 4. PPO 업데이트에 필요한 모든 정보를 cache에 저장
-        cache = dict(xs=xs, cap_idx=cap_idx, srv_idx=srv_idx, old_logp_cont=old_logp_cont, 
-                     old_logp_cap=old_logp_cap, old_logp_srv=old_logp_srv, old_logp_total=old_logp_total, 
-                     pc=pc, ps=ps)
-        return xs, caps, srvs, cache
+class ActorCritic(nn.Module):
+    """
+    조건부 혼합 행동 정책: 이산 행동(가동 대수·디스패칭)을 먼저 정하고,
+    연속 행동(속도·투입간격)은 '선택된 가동 대수'를 입력으로 받아 결정
+    → "2대면 고속, 3대면 저속" 같은 조합을 하나의 정책이 표현 가능
+    """
+    def __init__(self, obs_dim, n_cont=2, n_srv=N_SERVERS, n_dsp=2, h=64):
+        super().__init__()
+        self.n_srv = n_srv
+        self.trunk = nn.Sequential(nn.Linear(obs_dim, h), nn.Tanh(), nn.Linear(h, h), nn.Tanh())
+        self.disc_head = nn.Linear(h, n_srv + n_dsp)
+        self.cont_head = nn.Sequential(nn.Linear(h + n_srv, h), nn.Tanh(), nn.Linear(h, n_cont))
+        self.critic = mlp(obs_dim, 1)
+        self.log_std = nn.Parameter(torch.full((n_cont,), -0.7))
 
-    # 로그 확률 계산 함수
-    @staticmethod
-    def gaussian_log_prob(xs, mu, sigma):
-        # xs: (B,D), mu/sigma: (D,)
-        xs = np.asarray(xs, float)
-        mu = np.asarray(mu, float)
-        sigma = np.asarray(sigma, float)
-        var = sigma**2 + 1e-12
-        # per-dim logN then sum dims
-        return -0.5*np.sum(((xs-mu)**2)/var + 2*np.log(sigma+1e-12) + np.log(2*np.pi), axis=1)
+    def disc_dists(self, obs):
+        z = self.trunk(obs)
+        logits = self.disc_head(z)
+        return z, Categorical(logits=logits[:, :self.n_srv]), Categorical(logits=logits[:, self.n_srv:])
 
-    def current_log_probs(self, xs, cap_idx, srv_idx):
-        pc = self._softmax(self.logits_capacity)
-        ps = self._softmax(self.logits_servers)
-        lp_cont = self.gaussian_log_prob(xs, self.mu, self.sigma)
-        lp_cap  = np.log(pc[cap_idx] + 1e-12)
-        lp_srv  = np.log(ps[srv_idx] + 1e-12)
-        return lp_cont, lp_cap, lp_srv, pc, ps
+    def cont_dist(self, z, srv):
+        onehot = nn.functional.one_hot(srv, self.n_srv).float()
+        mu = self.cont_head(torch.cat([z, onehot], -1))
+        return Normal(mu, self.log_std.exp().expand_as(mu))
 
-    # ---------- gradients of log-probs ----------
-    def grad_logp_cont(self, xs):
-        # returns per-sample grads wrt mu, sigma
-        xs = np.asarray(xs, float)
-        mu, sigma = self.mu, self.sigma
-        var = sigma**2 + 1e-12
-        grad_mu  = (xs - mu) / var            # shape (B,D)
-        grad_sig = ((xs - mu)**2 - var) / (sigma**3 + 1e-12)  # (B,D)
-        return grad_mu, grad_sig
+    def value(self, obs):
+        return self.critic(obs).squeeze(-1)
+
+
+class PPOAgent:
+    def __init__(self, obs_dim, lr=3e-4, gamma=0.95, lam=0.9, clip_eps=0.2, epochs=10,
+                 minibatch=128, ent_coef=0.01, vf_coef=0.5, max_grad_norm=0.5, seed=0):
+        torch.manual_seed(seed)
+        self.net = ActorCritic(obs_dim)
+        self.opt = torch.optim.Adam(self.net.parameters(), lr=lr)
+        self.gamma, self.lam, self.clip_eps = gamma, lam, clip_eps
+        self.epochs, self.minibatch = epochs, minibatch
+        self.ent_coef, self.vf_coef, self.max_grad_norm = ent_coef, vf_coef, max_grad_norm
+
+    # ------------------------------------------------------------------
+    @torch.no_grad()
+    def act(self, obs: np.ndarray, deterministic=False):
+        o = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
+        z, ds, dd = self.net.disc_dists(o)
+        srv = ds.probs.argmax(-1) if deterministic else ds.sample()
+        dsp = dd.probs.argmax(-1) if deterministic else dd.sample()
+        dc = self.net.cont_dist(z, srv)
+        cont = dc.mean if deterministic else dc.sample()
+        logp = dc.log_prob(cont).sum(-1) + ds.log_prob(srv) + dd.log_prob(dsp)
+        a = dict(cont=cont[0].numpy(), srv=int(srv[0]), dsp=int(dsp[0]))
+        return a, float(logp[0]), float(self.net.value(o)[0])
+
+    @torch.no_grad()
+    def value(self, obs):
+        return float(self.net.value(torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0))[0])
 
     @staticmethod
-    def grad_logp_categorical(indices, probs, n_class):
-        # per-sample grad wrt logits: one_hot(idx) - probs
-        grad = - np.tile(probs, (len(indices), 1))
-        grad[np.arange(len(indices)), indices] += 1.0
-        return grad  # shape (B, K)
+    def to_control(a: Dict) -> Control:
+        u = np.clip(a["cont"], -1.0, 1.0)
+        scale = lambda x, b: b[0] + (x + 1.0) * 0.5 * (b[1] - b[0])
+        return Control(service_rate=scale(u[0], SERVICE_RATE_BOUNDS), active_servers=a["srv"] + 1,
+                       release_interval=scale(u[1], RELEASE_BOUNDS), dispatch=a["dsp"])
 
-    # ---------- PPO update (score-function approx) ----------
-    def update_ppo(self, cache, rewards, clip_eps=0.2, epochs=5,
-                   lr_mu=0.15, lr_sigma=0.05, lr_disc=0.1):
-        #0. 필요한 데이터 수집
-        xs       = cache["xs"]
-        cap_idx  = cache["cap_idx"]
-        srv_idx  = cache["srv_idx"]
-        old_tot  = cache["old_logp_total"]
+    # ------------------------------------------------------------------
+    def gae(self, rewards, values, last_value):
+        adv = np.zeros(len(rewards), dtype=np.float32)
+        g, nxt = 0.0, last_value
+        for t in reversed(range(len(rewards))):
+            delta = rewards[t] + self.gamma * nxt - values[t]
+            g = delta + self.gamma * self.lam * g
+            adv[t], nxt = g, values[t]
+        return adv, adv + np.asarray(values, dtype=np.float32)
 
-        #1. Advandate 계산
-        r = np.asarray(rewards, float)
-        adv = r - r.mean() #보상에서 평균을 빼서 Advantage 계산
-        adv = (adv - adv.mean()) / (adv.std() + 1e-8) #안정성 위해 표준화
+    def update(self, batch: Dict[str, np.ndarray]) -> Dict[str, float]:
+        obs = torch.as_tensor(batch["obs"], dtype=torch.float32)
+        cont = torch.as_tensor(batch["cont"], dtype=torch.float32)
+        srv = torch.as_tensor(batch["srv"], dtype=torch.long)
+        dsp = torch.as_tensor(batch["dsp"], dtype=torch.long)
+        old_logp = torch.as_tensor(batch["logp"], dtype=torch.float32)
+        adv = torch.as_tensor(batch["adv"], dtype=torch.float32)
+        ret = torch.as_tensor(batch["ret"], dtype=torch.float32)
+        adv = (adv - adv.mean()) / (adv.std() + 1e-8)
 
-        #2. 동일한 데이터로 여러 번 파라미터 업데이트
-        for _ in range(epochs):
-            #3. 현재 정책에서의 로그 확률과 비율 계산
-            lp_cont, lp_cap, lp_srv, pc, ps = self.current_log_probs(xs, cap_idx, srv_idx)
-            new_tot = lp_cont + lp_cap + lp_srv
-            ratio = np.exp(new_tot - old_tot)  #비율 = 현재 확률 / 과거 확률
+        n = len(obs)
+        stats = dict(pi_loss=0.0, v_loss=0.0, entropy=0.0, clip_frac=0.0)
+        n_mb = 0
+        for _ in range(self.epochs):
+            perm = torch.randperm(n)
+            for s in range(0, n, self.minibatch):
+                idx = perm[s:s + self.minibatch]
+                z, ds, dd = self.net.disc_dists(obs[idx])
+                dc = self.net.cont_dist(z, srv[idx])
+                logp = dc.log_prob(cont[idx]).sum(-1) + ds.log_prob(srv[idx]) + dd.log_prob(dsp[idx])
+                ratio = (logp - old_logp[idx]).exp()
+                s1 = ratio * adv[idx]
+                s2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * adv[idx]
+                pi_loss = -torch.min(s1, s2).mean()
+                v_loss = (self.net.value(obs[idx]) - ret[idx]).pow(2).mean()
+                ent = (dc.entropy().sum(-1) + ds.entropy() + dd.entropy()).mean()
+                loss = pi_loss + self.vf_coef * v_loss - self.ent_coef * ent
 
-            #4. 비율 클리핑
-            #정책 너무 급변하지 않도록 범위 제힌
-            w = np.clip(ratio, 1.0 - clip_eps, 1.0 + clip_eps)  # (B,)
+                self.opt.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(self.net.parameters(), self.max_grad_norm)
+                self.opt.step()
 
-            #5. 그래디언트 계산
-            #연속형 파라미터 계산
-            g_mu_samp, g_sig_samp = self.grad_logp_cont(xs)   # (B,D)
-            # score-function with clipped weight
-            g_mu  = np.mean(g_mu_samp  * w[:,None] * adv[:,None], axis=0)
-            g_sig = np.mean(g_sig_samp * w[:,None] * adv[:,None], axis=0)
+                stats["pi_loss"] += pi_loss.item(); stats["v_loss"] += v_loss.item()
+                stats["entropy"] += ent.item()
+                stats["clip_frac"] += ((ratio - 1).abs() > self.clip_eps).float().mean().item()
+                n_mb += 1
+        return {k: v / n_mb for k, v in stats.items()}
 
-            # update μ, σ
-            self.mu    = np.clip(self.mu    + lr_mu   * g_mu,
-                                 [self.bounds[k][0] for k in self.cont_names],
-                                 [self.bounds[k][1] for k in self.cont_names])
-            self.sigma = np.clip(self.sigma + lr_sigma* g_sig,
-                                 self.sigma_min, self.sigma_max)
+    def save(self, path):
+        torch.save(self.net.state_dict(), path)
 
-            #이산형 파라미터 계산
-            g_cap_samp = self.grad_logp_categorical(cap_idx, pc, len(pc))  # (B,Kc)
-            g_srv_samp = self.grad_logp_categorical(srv_idx, ps, len(ps))  # (B,Ks)
-            g_cap = np.mean(g_cap_samp * w[:,None] * adv[:,None], axis=0)
-            g_srv = np.mean(g_srv_samp * w[:,None] * adv[:,None], axis=0)
-
-            #파라미터가 유효한 범위 내에 있도록 클리핑
-            self.logits_capacity += lr_disc * g_cap
-            self.logits_servers  += lr_disc * g_srv
-
-    def summary(self):
-        return dict(mu=self.mu.copy(), sigma=self.sigma.copy(),
-                    pc=self._softmax(self.logits_capacity),
-                    ps=self._softmax(self.logits_servers))
-
+    def load(self, path):
+        self.net.load_state_dict(torch.load(path))
+        return self
