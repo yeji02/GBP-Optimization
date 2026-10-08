@@ -1,7 +1,7 @@
 """
 전체 파이프라인
- 0) ERP 주문 CSV 생성 (data/erp_orders.csv가 없을 때)
- 1) 단일 실행 예시 (Fixed 운영 조건, ERP 평가 기간 첫 구간)
+ 0) 주문 CSV 생성 (ERP 주문 형식) (data/erp_orders.csv가 없을 때)
+ 1) 단일 실행 예시 (Fixed 운영 조건, 평가 기간 첫 구간)
  2) Static-Opt: 고정 파라미터 조합 Grid Search (정적 최적화 baseline)
  3) PPO 학습: v1(성능 지표만) / v2(trade-off) 보상
  4) 평가: Fixed vs Static-Opt vs PPO, 시나리오별 KPI + 그림 → results/
@@ -14,7 +14,7 @@ RAW_XLSX = "data/raw/online_retail_II.xlsx"
 
 if __name__ == "__main__":
     if not os.path.exists(DATA_CSV):
-        print("=== ERP 주문 CSV 생성 ===")
+        print("=== 주문 CSV 생성 (ERP 주문 형식) ===")
         prepare(RAW_XLSX)
 
     from gbp_env import GBPEnv
@@ -23,7 +23,7 @@ if __name__ == "__main__":
 
     os.makedirs("runs", exist_ok=True)
 
-    print("=== 단일 실행 예시 (Fixed, ERP) ===")
+    print("=== 단일 실행 예시 (Fixed, 실제 주문 수요) ===")
     print(rollout(GBPEnv("erp"), FixedPolicy(), seed=0))
 
     print("\n=== Static-Opt (Grid Search) ===")

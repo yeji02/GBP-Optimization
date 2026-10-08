@@ -6,7 +6,7 @@ from scenarios import Scenario
 
 
 class Generator(Atomic):
-    """수요 발생기 (환경 변수): ERP 주문 데이터의 도착 시각·작업량 그대로 Job을 생성"""
+    """수요 발생기 (환경 변수): 실제 판매 주문 데이터의 도착 시각·작업량 그대로 Job을 생성"""
     def __init__(self, scenario: Scenario):
         super().__init__("Generator")
         self.out: Port[Job] = Port(Job, "out")

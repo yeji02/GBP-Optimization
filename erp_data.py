@@ -1,7 +1,8 @@
 """
-ERP 주문 데이터 → 시뮬레이션 수요 입력
+실제 판매 주문 데이터 → ERP 주문 형식 CSV → 시뮬레이션 수요 입력
 
 원천 데이터: UCI Online Retail II (영국 온라인 도매업체 실거래, 2009-12 ~ 2011-12, CC BY 4.0)
+  ERP에서 추출한 데이터가 아니라 판매 거래(인보이스) 기록이며, ERP 판매주문 export와 같은 형식으로 정리해 사용
   https://archive.ics.uci.edu/dataset/502/online+retail+ii
 
 1) prepare(): 원천 xlsx → ERP 주문 export 형식 CSV (data/erp_orders.csv)

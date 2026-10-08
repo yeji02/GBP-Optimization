@@ -1,7 +1,7 @@
 """
 평가/분석 스크립트: Fixed vs Static-Opt vs PPO (+ 보상 설계 v1 vs v2 비교)
- - 평가 데이터: ERP 주문 평가 기간(2011-07 ~ 2011-12)을 5영업일 구간으로 나눠 전부 사용
- - 시나리오: ERP 수요 그대로 (비수기 7~9월 / 성수기 10~12월로 구분) + 설비 성능 저하(3일차부터 P0 -30%)
+ - 평가 데이터: 판매 주문 데이터 평가 기간(2011-07 ~ 2011-12)을 5영업일 구간으로 나눠 전부 사용
+ - 시나리오: 실제 주문 수요 그대로 (비수기 7~9월 / 성수기 10~12월로 구분) + 설비 성능 저하(3일차부터 P0 -30%)
  - 모든 방법을 동일 구간·동일 시드에서 trade-off 보상(v2) 기준으로 평가
  - 출력: results/results.md, results/kpi_runs.csv, results/*.png
 """
@@ -116,7 +116,7 @@ def write_report(rows, traces, jobs, methods):
     main = [m for m in ("Fixed", "Static-Opt", "PPO") if m in methods]
     n_win = len(test_windows())
     L = ["# 평가 결과", "",
-         f"- 수요: ERP 주문 데이터(UCI Online Retail II) 평가 기간 2011-07 ~ 2011-12, 5영업일 구간 {n_win}개 × 시드 {N_SEEDS}개",
+         f"- 수요: 실제 판매 주문 데이터(UCI Online Retail II, ERP 주문 형식으로 정리) 평가 기간 2011-07 ~ 2011-12, 5영업일 구간 {n_win}개 × 시드 {N_SEEDS}개",
          "- 시간축: 영업일 07~21시, 1 sim time = 12분, 의사결정 주기 = 1시간",
          "- 모든 방법은 동일한 trade-off 보상(v2)으로 채점", ""]
 
@@ -256,7 +256,7 @@ def plot_hourly(traces, methods):
     hours = [f"{DAY_START_HOUR + h:02d}" for h in range(STEPS_PER_DAY)]
     fig, axes = plt.subplots(1, 2, figsize=(14, 3.6))
     axes[0].bar(hours, arr, color=INK2, width=0.7)
-    axes[0].set_title("시간대별 평균 주문 도착률 (ERP)", loc="left")
+    axes[0].set_title("시간대별 평균 주문 도착률 (실제 주문)", loc="left")
     axes[1].plot(hours, srv, color=COLOR["PPO"], marker="o", ms=5, label="PPO")
     if "Static-Opt" in methods:
         b = load_static_best("runs/static_opt.json")

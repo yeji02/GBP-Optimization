@@ -1,6 +1,6 @@
 """
 환경 변수(AI가 통제할 수 없는 공정 조건) 정의
- - Demand Arrival / Job Size : ERP 주문 데이터에서 재생 (erp_data.py)
+ - Demand Arrival / Job Size : 실제 판매 주문 데이터에서 재생 (erp_data.py)
  - Processing Noise          : 처리시간 변동 (lognormal 곱셈 노이즈)
  - Machine Degradation       : 특정 Processor의 처리 성능 저하
 """
@@ -23,7 +23,7 @@ class Scenario:
     degradation: Optional[Tuple[int, float, float]] = None    # (server_idx, t_start, factor)
     proc_noise_cv: float = 0.1
     horizon: float = HORIZON
-    period: str = ""                                          # 실제 ERP 기간
+    period: str = ""                                          # 실제 주문 기간
     start_day: int = 0
 
     def health(self, server: int, t: float) -> float:

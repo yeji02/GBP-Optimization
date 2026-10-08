@@ -1,26 +1,26 @@
 # DEVS 기반 동적 생산공정 파라미터 최적화 (PPO)
 
 ## 📌 프로젝트 개요
-DEVS(xdevs) 기반 다중 설비 생산공정 시뮬레이션에서 공정 상태를 일정 주기마다 관측하고, 강화학습(PPO)이 운영 파라미터를 동적으로 조절하는 프로젝트입니다. 수요(주문 도착 시각·작업량)는 실제 ERP 주문 데이터를 재생해 사용합니다.
+DEVS(xdevs) 기반 다중 설비 생산공정 시뮬레이션에서 공정 상태를 일정 주기마다 관측하고, 강화학습(PPO)이 운영 파라미터를 동적으로 조절하는 프로젝트입니다. 수요(주문 도착 시각·작업량)는 실제 판매 주문 데이터를 ERP 주문 형식으로 정리해 재생합니다.
 
 ```
-ERP 주문 → 공정 상태 수집 → AI가 운영 파라미터 결정 → DEVS 시뮬레이션(1시간) → KPI·보상 계산 → 다음 의사결정
+주문 데이터 → 공정 상태 수집 → AI가 운영 파라미터 결정 → DEVS 시뮬레이션(1시간) → KPI·보상 계산 → 다음 의사결정
 ```
 
 주요 내용
 1. AI 제어변수와 환경변수 분리
-2. 실제 ERP 주문 데이터 기반 수요 (시간대·계절 변동 포함)
+2. 실제 판매 주문 데이터 기반 수요 (시간대·계절 변동 포함)
 3. 시뮬레이션 도중 상태를 보고 파라미터를 바꾸는 동적 최적화
 4. 자원 비용이 포함된 trade-off 보상 설계
 5. 비수기 / 성수기 / 설비 성능 저하 조건에서 정적 최적 조합과 비교·검증
 
 ---
 
-## 🗂 ERP 데이터
+## 🗂 주문 데이터
 
 | 항목 | 내용 |
 |---|---|
-| 원천 | [UCI Online Retail II](https://archive.ics.uci.edu/dataset/502/online+retail+ii) — 영국 온라인 도매업체의 실거래 주문 (2009-12 ~ 2011-12), CC BY 4.0 |
+| 원천 | [UCI Online Retail II](https://archive.ics.uci.edu/dataset/502/online+retail+ii) — 영국 온라인 도매업체의 실제 판매 거래(인보이스) 기록 (2009-12 ~ 2011-12), CC BY 4.0 |
 | 정제 | 주문 라인 1,067,371건 → 취소·반품·수량/단가 ≤ 0·중복 제외 → 주문 40,077건 (`data/erp_orders.csv`) |
 | 형식 | `order_id, order_datetime, customer_id, country, n_lines, quantity` (ERP 주문 export 형식) |
 | 로트 분할 | 주문 수량이 800개(상위 5% 지점)를 넘으면 균등 분할 → 로트 44,605개 |
@@ -30,7 +30,7 @@ ERP 주문 → 공정 상태 수집 → AI가 운영 파라미터 결정 → DEV
 
 주문은 07~09시와 18시 이후에 거의 없고 12시에 가장 많이 들어옵니다. 11월 주문량은 1월의 약 2.5배입니다. 이 시간대·계절 변동이 그대로 시뮬레이션 수요가 됩니다.
 
-다른 ERP 데이터를 쓰려면 위 형식으로 export한 CSV를 `data/erp_orders.csv`에 두면 됩니다.
+원천 데이터는 ERP에서 추출한 것이 아니라 판매 거래 기록입니다. ERP 판매주문 데이터와 같은 형식(주문번호·주문 일시·고객·수량)으로 정리했기 때문에, 실제 ERP에서 같은 형식으로 export한 CSV를 `data/erp_orders.csv`에 두면 그대로 사용할 수 있습니다. 작업지시·표준 작업시간 같은 생산 정보는 없어서 작업량은 주문 수량으로 추정했습니다.
 
 ---
 
@@ -41,12 +41,12 @@ ERP 주문 → 공정 상태 수집 → AI가 운영 파라미터 결정 → DEV
         ┌──────────────┬──────────────┬─────────────────────┐
         ▼              ▼              ▼                     ▼
 Generator ──▶ Release ──▶ Buffer ──▶ Processor0..3 ──▶ Collector
-(ERP 주문)    (작업 투입)   (대기·할당)   (가공)              (KPI 수집)
+(주문 재생)    (작업 투입)   (대기·할당)   (가공)              (KPI 수집)
 ```
 
 | 컴포넌트 | 역할 |
 |---|---|
-| Generator | ERP 주문 데이터의 도착 시각·작업량 그대로 Job 생성 |
+| Generator | 주문 데이터의 도착 시각·작업량 그대로 Job 생성 |
 | Release | 주문 Backlog를 보관하고 최소 `release_interval` 간격으로 공정에 투입 |
 | Buffer | FIFO 대기열 + 디스패처. 가동 대수·할당 정책에 따라 유휴 Processor에 작업 전달 |
 | Processor ×4 | 처리시간 = size / (service_rate × health(t)) × noise. 최대 4대를 만들어 두고 가동 여부는 Buffer가 제어 |
@@ -62,8 +62,8 @@ AI의 결정은 루트 Coupled 모델의 입력 포트 `in_ctrl`로 DEVS 외부 
 | | Active Server 수 | 1 ~ 4대 |
 | | Release Interval | 0.05 ~ 1.0 (작업 투입 최소 간격) |
 | | Dispatching Policy | `INDEX`(고정 순서) / `HEALTH`(관측 성능이 높은 설비 우선) |
-| 환경변수 | Demand Arrival | ERP 주문 도착 시각 |
-| | Job Size | ERP 주문 수량 기반 |
+| 환경변수 | Demand Arrival | 실제 주문 도착 시각 |
+| | Job Size | 실제 주문 수량 기반 |
 | | Processing Noise | lognormal, CV 0.1 |
 | | Machine Degradation | 특정 Processor의 성능 배율 저하 (AI는 직접 볼 수 없고 처리시간으로만 추정) |
 
@@ -88,8 +88,8 @@ $$R_t = w_1 T - w_2 W - w_3 \mathrm{WIP} - w_4 C - w_5 V$$
 | 구분 | 내용 |
 |---|---|
 | 학습 | 학습 기간에서 임의의 5영업일 구간. 절반 확률로 임의 설비·시점·크기(-20~-40%)의 성능 저하 추가 |
-| 평가: 비수기 | 2011-07 ~ 09 구간, ERP 수요 그대로 |
-| 평가: 성수기 | 2011-10 ~ 12 구간, ERP 수요 그대로 |
+| 평가: 비수기 | 2011-07 ~ 09 구간, 실제 주문 수요 그대로 |
+| 평가: 성수기 | 2011-10 ~ 12 구간, 실제 주문 수요 그대로 |
 | 평가: 설비 성능 저하 | 평가 기간 전체 구간, 3일차부터 Processor0 성능 -30% |
 
 ### PPO
@@ -144,7 +144,7 @@ Static-Opt → PPO: 자원 비용 -42%, WIP -10%, 대기시간 -3%, SLA 위반 1
 ```bash
 pip install -r requirements.txt      # xdevs, numpy, torch, matplotlib, pandas, openpyxl
 
-# (선택) ERP 주문 CSV 다시 만들기 — data/erp_orders.csv는 저장소에 포함되어 있음
+# (선택) 주문 CSV 다시 만들기 — data/erp_orders.csv는 저장소에 포함되어 있음
 #   https://archive.ics.uci.edu/dataset/502/online+retail+ii 에서 받은 online_retail_II.xlsx를 data/raw/에 두고
 python erp_data.py data/raw/online_retail_II.xlsx
 
@@ -161,10 +161,10 @@ python evaluate.py                    # → results/results.md, results/*.png
 
 | 파일 | 설명 |
 |---|---|
-| `erp_data.py` | ERP 주문 데이터 정제(xlsx → CSV)와 시뮬레이션 주문 스트림 생성(시간축 변환, 로트 분할) |
-| `data/erp_orders.csv` | 정제된 ERP 주문 데이터 |
+| `erp_data.py` | 판매 주문 데이터를 ERP 주문 형식 CSV로 정제(xlsx → CSV)하고 시뮬레이션 주문 스트림 생성(시간축 변환, 로트 분할) |
+| `data/erp_orders.csv` | ERP 주문 형식으로 정제한 주문 데이터 |
 | `xdevs_Job.py` | Job(타임스탬프 포함), Control(제어 메시지), TimeAvg(시간가중 평균 누적기) |
-| `xdevs_Gen.py` | ERP 주문 재생 Generator |
+| `xdevs_Gen.py` | 주문 데이터 재생 Generator |
 | `xdevs_Release.py` | 작업 투입 모델 (Release Interval) |
 | `xdevs_Buffer.py` | 대기열 + 디스패처 (가동 대수, INDEX/HEALTH 정책) |
 | `xdevs_Proc.py` | Processor (Service Rate, 처리 노이즈, 성능 저하) |
