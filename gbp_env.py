@@ -3,7 +3,7 @@
 
   공정 상태 수집 → AI가 운영 파라미터 결정 → DEVS 시뮬레이션(Δt) → KPI/보상 계산 → 다음 의사결정
 
- - 의사결정 주기 DT(=10 time)마다 상태 s_t를 관측하고 행동 a_t를 Control 메시지로 DEVS 모델에 주입
+ - 의사결정 주기 DT(=5 time, 실제 1시간)마다 상태 s_t를 관측하고 행동 a_t를 Control 메시지로 DEVS 모델에 주입
  - s_t = [Queue, Backlog, WIP, Utilization, Throughput, AvgWaiting, ArrivalRate, ArrivalTrend,
           ActiveServers, ServiceRate, ReleaseInterval, ServerHealth×4]
  - a_t = [ServiceRate, ActiveServers, ReleaseInterval, Dispatch]
@@ -19,7 +19,7 @@ from xdevs_Coupled import GBPSystemMulti
 from scenarios import Scenario, make_scenario, BASE_RATE
 
 N_SERVERS = 4
-DT = 10.0
+DT = 5.0
 SERVICE_RATE_BOUNDS = (0.7, 1.2)
 RELEASE_BOUNDS = (0.05, 1.0)
 OBS_DIM = 11 + N_SERVERS
@@ -108,7 +108,7 @@ class GBPEnv:
         self.total_cost += cost * self.dt
 
         if self.record:
-            self.trace.append(dict(t=self.t, demand_rate=self.sc.arrival_rate(self.t - 1e-9),
+            self.trace.append(dict(t=self.t, demand_rate=st["arrival_rate"],
                                    true_health=[self.sc.health(i, self.t) for i in range(N_SERVERS)],
                                    reward=r, cost=cost, **st,
                                    service_rate=ctrl.service_rate, active_servers=ctrl.active_servers,

@@ -22,7 +22,7 @@ class GBPSystemMulti(Coupled):
         self.in_ctrl: Port[Control] = Port(Control, "in_ctrl")
         self.add_in_port(self.in_ctrl)
 
-        gen = Generator(scenario, seed=seed)
+        gen = Generator(scenario)
         rel = Release(clock, release_interval=init_ctrl.release_interval)
         buf = BufferMulti(clock, n_servers, active_servers=init_ctrl.active_servers,
                           dispatch=init_ctrl.dispatch)

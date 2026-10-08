@@ -1,0 +1,6 @@
+[Static-Opt] 108 combos × 16 episodes in 92s
+    {'service_rate': 1.0, 'active_servers': 4, 'release_interval': 0.25, 'dispatch': 1, 'mean_reward': -170.87140927891053, 'std_reward': 144.76919687720158}
+    {'service_rate': 1.1, 'active_servers': 4, 'release_interval': 0.25, 'dispatch': 1, 'mean_reward': -170.9006619276663, 'std_reward': 121.12890464421942}
+    {'service_rate': 1.0, 'active_servers': 4, 'release_interval': 0.25, 'dispatch': 0, 'mean_reward': -171.19424237775593, 'std_reward': 142.51063289705402}
+    {'service_rate': 1.1, 'active_servers': 4, 'release_interval': 0.25, 'dispatch': 0, 'mean_reward': -171.7296725041085, 'std_reward': 120.32364347117414}
+    {'service_rate': 1.2, 'active_servers': 3, 'release_interval': 0.25, 'dispatch': 1, 'mean_reward': -172.16621615451032, 'std_reward': 170.54113113736454}

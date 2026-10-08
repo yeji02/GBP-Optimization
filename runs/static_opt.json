@@ -1,172 +1,172 @@
 {
  "best": {
-  "service_rate": 1.2,
-  "active_servers": 2,
-  "release_interval": 0.05,
+  "service_rate": 1.0,
+  "active_servers": 4,
+  "release_interval": 0.25,
   "dispatch": 1,
-  "mean_reward": -13.233790779823853,
-  "std_reward": 3.172198312664287
+  "mean_reward": -170.87140927891053,
+  "std_reward": 144.76919687720158
  },
  "top": [
   {
-   "service_rate": 1.2,
-   "active_servers": 2,
-   "release_interval": 0.05,
-   "dispatch": 1,
-   "mean_reward": -13.233790779823853,
-   "std_reward": 3.172198312664287
-  },
-  {
-   "service_rate": 1.2,
-   "active_servers": 2,
+   "service_rate": 1.0,
+   "active_servers": 4,
    "release_interval": 0.25,
    "dispatch": 1,
-   "mean_reward": -13.425158021785279,
-   "std_reward": 3.114406387460268
+   "mean_reward": -170.87140927891053,
+   "std_reward": 144.76919687720158
   },
   {
    "service_rate": 1.1,
-   "active_servers": 2,
-   "release_interval": 0.05,
+   "active_servers": 4,
+   "release_interval": 0.25,
    "dispatch": 1,
-   "mean_reward": -17.27685933413197,
-   "std_reward": 9.537079990965058
+   "mean_reward": -170.9006619276663,
+   "std_reward": 121.12890464421942
+  },
+  {
+   "service_rate": 1.0,
+   "active_servers": 4,
+   "release_interval": 0.25,
+   "dispatch": 0,
+   "mean_reward": -171.19424237775593,
+   "std_reward": 142.51063289705402
   },
   {
    "service_rate": 1.1,
-   "active_servers": 2,
+   "active_servers": 4,
    "release_interval": 0.25,
-   "dispatch": 1,
-   "mean_reward": -17.502329241230655,
-   "std_reward": 9.558929715612217
-  },
-  {
-   "service_rate": 0.9,
-   "active_servers": 3,
-   "release_interval": 0.05,
-   "dispatch": 1,
-   "mean_reward": -18.714537911466934,
-   "std_reward": 3.6786987085487586
-  },
-  {
-   "service_rate": 0.9,
-   "active_servers": 3,
-   "release_interval": 0.25,
-   "dispatch": 1,
-   "mean_reward": -19.308902704066377,
-   "std_reward": 3.692040917647592
-  },
-  {
-   "service_rate": 0.8,
-   "active_servers": 3,
-   "release_interval": 0.05,
-   "dispatch": 1,
-   "mean_reward": -19.578906940536044,
-   "std_reward": 3.508089033404672
+   "dispatch": 0,
+   "mean_reward": -171.7296725041085,
+   "std_reward": 120.32364347117414
   },
   {
    "service_rate": 1.2,
-   "active_servers": 2,
+   "active_servers": 3,
    "release_interval": 0.25,
-   "dispatch": 0,
-   "mean_reward": -19.947726674710303,
-   "std_reward": 15.304036795799083
+   "dispatch": 1,
+   "mean_reward": -172.16621615451032,
+   "std_reward": 170.54113113736454
   },
   {
    "service_rate": 1.2,
-   "active_servers": 2,
-   "release_interval": 0.05,
-   "dispatch": 0,
-   "mean_reward": -19.985999664140664,
-   "std_reward": 15.148277923606924
-  },
-  {
-   "service_rate": 0.8,
-   "active_servers": 3,
+   "active_servers": 4,
    "release_interval": 0.25,
    "dispatch": 1,
-   "mean_reward": -20.008957626026458,
-   "std_reward": 3.183584791617582
+   "mean_reward": -175.5148279403359,
+   "std_reward": 103.0465119282242
+  },
+  {
+   "service_rate": 1.2,
+   "active_servers": 3,
+   "release_interval": 0.25,
+   "dispatch": 0,
+   "mean_reward": -175.67551256430914,
+   "std_reward": 168.64353444197965
   },
   {
    "service_rate": 0.9,
-   "active_servers": 3,
-   "release_interval": 0.05,
-   "dispatch": 0,
-   "mean_reward": -20.943307967008575,
-   "std_reward": 5.69986996430585
-  },
-  {
-   "service_rate": 0.9,
-   "active_servers": 3,
-   "release_interval": 0.25,
-   "dispatch": 0,
-   "mean_reward": -21.449603196775904,
-   "std_reward": 5.455841380687599
-  },
-  {
-   "service_rate": 1.0,
-   "active_servers": 3,
-   "release_interval": 0.05,
-   "dispatch": 1,
-   "mean_reward": -22.432811478440406,
-   "std_reward": 4.818021799931014
-  },
-  {
-   "service_rate": 1.0,
-   "active_servers": 3,
+   "active_servers": 4,
    "release_interval": 0.25,
    "dispatch": 1,
-   "mean_reward": -23.069282934562647,
-   "std_reward": 4.809613984317829
+   "mean_reward": -176.05294867003644,
+   "std_reward": 173.01305290419816
   },
   {
-   "service_rate": 0.8,
-   "active_servers": 3,
-   "release_interval": 0.05,
-   "dispatch": 0,
-   "mean_reward": -23.61990283893768,
-   "std_reward": 7.730849357320681
-  },
-  {
-   "service_rate": 0.8,
-   "active_servers": 3,
+   "service_rate": 1.2,
+   "active_servers": 4,
    "release_interval": 0.25,
    "dispatch": 0,
-   "mean_reward": -23.827818393286748,
-   "std_reward": 7.697971324343563
-  },
-  {
-   "service_rate": 1.0,
-   "active_servers": 3,
-   "release_interval": 0.05,
-   "dispatch": 0,
-   "mean_reward": -24.025193354491172,
-   "std_reward": 5.699140644548813
-  },
-  {
-   "service_rate": 1.0,
-   "active_servers": 3,
-   "release_interval": 0.25,
-   "dispatch": 0,
-   "mean_reward": -24.52964778793003,
-   "std_reward": 5.597623809698374
-  },
-  {
-   "service_rate": 1.1,
-   "active_servers": 2,
-   "release_interval": 0.5,
-   "dispatch": 1,
-   "mean_reward": -27.8280080788208,
-   "std_reward": 21.595313835095805
+   "mean_reward": -176.3138367200371,
+   "std_reward": 103.00170619410436
   },
   {
    "service_rate": 1.1,
    "active_servers": 3,
+   "release_interval": 0.25,
+   "dispatch": 1,
+   "mean_reward": -177.3919677725674,
+   "std_reward": 196.69485445411797
+  },
+  {
+   "service_rate": 0.9,
+   "active_servers": 4,
+   "release_interval": 0.25,
+   "dispatch": 0,
+   "mean_reward": -178.48322056157048,
+   "std_reward": 173.57007442595722
+  },
+  {
+   "service_rate": 1.0,
+   "active_servers": 4,
    "release_interval": 0.05,
    "dispatch": 1,
-   "mean_reward": -28.702238078450275,
-   "std_reward": 5.544143459023637
+   "mean_reward": -182.23964070408562,
+   "std_reward": 166.17475210304454
+  },
+  {
+   "service_rate": 1.1,
+   "active_servers": 4,
+   "release_interval": 0.05,
+   "dispatch": 1,
+   "mean_reward": -182.4034956093372,
+   "std_reward": 145.88571403332347
+  },
+  {
+   "service_rate": 1.1,
+   "active_servers": 4,
+   "release_interval": 0.05,
+   "dispatch": 0,
+   "mean_reward": -183.4717135476025,
+   "std_reward": 146.04836698098345
+  },
+  {
+   "service_rate": 1.1,
+   "active_servers": 3,
+   "release_interval": 0.25,
+   "dispatch": 0,
+   "mean_reward": -183.64660856639074,
+   "std_reward": 194.9290964820217
+  },
+  {
+   "service_rate": 1.0,
+   "active_servers": 4,
+   "release_interval": 0.05,
+   "dispatch": 0,
+   "mean_reward": -183.87133670995533,
+   "std_reward": 168.9086599313683
+  },
+  {
+   "service_rate": 1.2,
+   "active_servers": 3,
+   "release_interval": 0.05,
+   "dispatch": 1,
+   "mean_reward": -186.2016841944033,
+   "std_reward": 197.50218913944238
+  },
+  {
+   "service_rate": 1.2,
+   "active_servers": 4,
+   "release_interval": 0.05,
+   "dispatch": 1,
+   "mean_reward": -187.1479237054872,
+   "std_reward": 129.79075550543035
+  },
+  {
+   "service_rate": 1.2,
+   "active_servers": 4,
+   "release_interval": 0.05,
+   "dispatch": 0,
+   "mean_reward": -188.01543427881933,
+   "std_reward": 129.95209344477806
+  },
+  {
+   "service_rate": 1.2,
+   "active_servers": 3,
+   "release_interval": 0.05,
+   "dispatch": 0,
+   "mean_reward": -189.2836940422801,
+   "std_reward": 192.5429208310257
   }
  ]
 }

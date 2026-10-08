@@ -2,3 +2,5 @@ xdevs>=3.0
 numpy
 torch
 matplotlib
+pandas      # erp_data.py로 원천 xlsx를 정제할 때만 필요
+openpyxl    # 위와 동일

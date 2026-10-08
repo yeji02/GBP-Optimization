@@ -1,21 +1,30 @@
 """
 전체 파이프라인
- 1) 단일 실행 예시 (Fixed 운영 조건, Demand Surge 시나리오)
+ 0) ERP 주문 CSV 생성 (data/erp_orders.csv가 없을 때)
+ 1) 단일 실행 예시 (Fixed 운영 조건, ERP 평가 기간 첫 구간)
  2) Static-Opt: 고정 파라미터 조합 Grid Search (정적 최적화 baseline)
  3) PPO 학습: v1(성능 지표만) / v2(trade-off) 보상
  4) 평가: Fixed vs Static-Opt vs PPO, 시나리오별 KPI + 그림 → results/
 """
 import json, os, subprocess, sys
 
-from gbp_env import GBPEnv
-from baselines import FixedPolicy, rollout, static_grid_search
-from train_ppo import train
+from erp_data import DATA_CSV, prepare
+
+RAW_XLSX = "data/raw/online_retail_II.xlsx"
 
 if __name__ == "__main__":
+    if not os.path.exists(DATA_CSV):
+        print("=== ERP 주문 CSV 생성 ===")
+        prepare(RAW_XLSX)
+
+    from gbp_env import GBPEnv
+    from baselines import FixedPolicy, rollout, static_grid_search
+    from train_ppo import train
+
     os.makedirs("runs", exist_ok=True)
 
-    print("=== 단일 실행 예시 (Fixed, Demand Surge) ===")
-    print(rollout(GBPEnv("demand_surge"), FixedPolicy(), seed=0))
+    print("=== 단일 실행 예시 (Fixed, ERP) ===")
+    print(rollout(GBPEnv("erp"), FixedPolicy(), seed=0))
 
     print("\n=== Static-Opt (Grid Search) ===")
     res = static_grid_search()

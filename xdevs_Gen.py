@@ -1,5 +1,4 @@
 import math
-import numpy as np
 from xdevs.models import Atomic, Port
 
 from xdevs_Job import Job
@@ -7,47 +6,41 @@ from scenarios import Scenario
 
 
 class Generator(Atomic):
-    """수요 발생기 (환경 변수): 시간가변 도착률 λ(t)의 비정상 포아송 과정(thinning)으로 주문 생성"""
-    def __init__(self, scenario: Scenario, seed=0):
+    """수요 발생기 (환경 변수): ERP 주문 데이터의 도착 시각·작업량 그대로 Job을 생성"""
+    def __init__(self, scenario: Scenario):
         super().__init__("Generator")
         self.out: Port[Job] = Port(Job, "out")
         self.add_out_port(self.out)
 
-        self.sc = scenario
-        self.rng = np.random.default_rng(seed)
-        self.lam_max = scenario.max_arrival_rate()
-
+        self.orders = scenario.orders
+        self.horizon = scenario.horizon
         self.now = 0.0
-        self.next_id = 0
+        self.i = 0
         self.n_arrived = 0
         self.sigma = math.inf
 
-    def _next_arrival(self, t):
-        # thinning: λ_max로 후보를 뽑고 λ(t)/λ_max 확률로 채택
-        while True:
-            t += self.rng.exponential(1.0 / self.lam_max)
-            if t >= self.sc.horizon:
-                return math.inf
-            if self.rng.random() < self.sc.arrival_rate(t) / self.lam_max:
-                return t
+    def _schedule(self):
+        if self.i < len(self.orders) and self.orders[self.i, 0] < self.horizon:
+            self.sigma = max(0.0, self.orders[self.i, 0] - self.now)
+        else:
+            self.sigma = math.inf
 
     def initialize(self):
         self.now = 0.0
-        self.sigma = self._next_arrival(0.0)
+        self._schedule()
 
     def ta(self):
         return self.sigma
 
     def lambdaf(self):
-        t = self.now + self.sigma
-        size = max(0.05, self.rng.normal(self.sc.size_mu, self.sc.size_sigma))
-        self.out.add(Job(self.next_id, creation_time=t, size=size))
+        t, size = self.orders[self.i]
+        self.out.add(Job(self.i, creation_time=float(t), size=float(size)))
 
     def deltint(self):
         self.now += self.sigma
-        self.next_id += 1
+        self.i += 1
         self.n_arrived += 1
-        self.sigma = self._next_arrival(self.now) - self.now
+        self._schedule()
 
     def deltext(self, e):
         self.now += e
